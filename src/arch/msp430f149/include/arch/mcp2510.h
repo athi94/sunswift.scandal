@@ -403,6 +403,7 @@ void MCP2510_set_clkout_mode(u08 mode);
 #define trFILHIT12	2
 #define trFILHIT11	1
 #define trFILHIT10	0
+
 /* Bit definitions TXBNSIDL/RXNSIDL */
 #define EXIDE           3
 

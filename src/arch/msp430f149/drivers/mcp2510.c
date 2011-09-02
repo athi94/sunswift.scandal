@@ -33,12 +33,8 @@
 #include <scandal/error.h>
 #include <scandal/led.h>
 
-#include <scandal/uart.h>
-
-/* "spi_devices.h" must #define MCP2510 in order for this to compile.
-   MCP2510 is the identifier of the SPI device to be used with
-   spi_select(); */
-
+/* project/spi_devices.h must #define MCP2510 in order for this to compile.
+   MCP2510 is the identifier of the SPI device to be used with spi_select() */
 
 /* File scope variables */
 u32	fil1_data, fil1_mask;
@@ -47,7 +43,7 @@ u32	fil2_data, fil2_mask;
 /* Buffers */
 #if CAN_TX_BUFFER_SIZE > 0
 /* Transmit buffer */
-can_msg			cantxbuf[CAN_TX_BUFFER_SIZE];
+can_msg		cantxbuf[CAN_TX_BUFFER_SIZE];
 u08			tx_buf_start;
 u08			tx_num_msgs;
 u08			tx_buf_lock;
@@ -62,10 +58,10 @@ volatile u08		rx_buf_lock;
 #endif
 
 /* Prototypes */
-u08 enqueue_message(can_msg*	msg);
+u08 enqueue_message(can_msg *msg);
 u08 send_queued_messages(void);
 u08 buffer_received(void);
-void careful_clear_receive_interrupt(u08  flag);
+void careful_clear_receive_interrupt(u08 flag);
 
 /* -------------------------------------------------------------------------
    MCP2510 Data
@@ -89,9 +85,8 @@ u08 bit_timings[SCANDAL_NUM_BAUD][3] = {
   {0x1F, 0xFF, 0x07}     /* SCANDAL_B10  */
 };
 
-/* CAN Interface Functions */
-/*! \fn init_can
-    \brief Initialise the CAN hardware, setting options to their defaults (as specified in scandal_can.h)
+/* CAN Interface Functions 
+   brief Initialisation of the CAN hardware
  */
 void init_can(void){
 	/* This is done a little dodgy hee and needs fixing */
@@ -118,13 +113,13 @@ void init_can(void){
 
 	/* Set up recieve filters */
 	value = 0;
-	value |= (MCP2510_RECEIVE_EXTENDED << trRXM00); // lets receive ext messages
-	value |= 0x1;
+	value |= (MCP2510_RECEIVE_EXTENDED << trRXM00); // lets receive ext messages in rx buffer 0
+	value |= (1 << trFILHIT00); // use acceptance filter 1
 	MCP2510_write(RXB0CTRL, &value, 1);
 
 	value = 0;
-	value |= (MCP2510_RECEIVE_STANDARD << trRXM01); // lets receive std messages
-	value |= 0x2;
+	value |= (MCP2510_RECEIVE_STANDARD << trRXM01); // lets receive std messages in rx buffer 1
+	value |= (0<<trFILHIT12) | (1<<trFILHIT11) | (0<<trFILHIT10); // use acceptance filter 2
 	MCP2510_write(RXB1CTRL, &value, 1);
 
 	/* Set the controller to normal mode */
@@ -151,18 +146,14 @@ void init_can(void){
 	enable_can_interrupt();
 }
 
-/*! \fn    can_interrupt
-    \brief Should be called by the host code when the controller generates an interrupt
- */
+/* Should be called by the host code when the controller generates an interrupt */
 void can_interrupt(void){
 #if CAN_RX_BUFFER_SIZE > 0
 	buffer_received();
 #endif
 }
 
-/*! \fn 	can_poll
-    \brief	should be called by the host code when there is some time available to
-		do some background work */
+/* should be called by the host code when there is some time available to do some background work */
 void can_poll(void){
 #if CAN_RX_BUFFER_SIZE > 0
 	buffer_received();
@@ -173,28 +164,25 @@ void can_poll(void){
 #endif
 }
 
-
-/*! Get a message from the CAN controller */
+/* Get a message from the CAN controller */
 u08 can_get_msg(can_msg* msg){
 #if CAN_RX_BUFFER_SIZE > 0
+	if(rx_num_msgs == 0)
+		return (NO_MSG_ERR);
 
-  if(rx_num_msgs == 0)
-	return (NO_MSG_ERR);
+	disable_can_interrupt();
+	*msg = canrxbuf[rx_buf_start];
+	rx_buf_start = (rx_buf_start + 1) & CAN_RX_BUFFER_MASK;
+	rx_num_msgs--;
+	enable_can_interrupt();
 
-  disable_can_interrupt();
-  *msg = canrxbuf[rx_buf_start];
-  rx_buf_start = (rx_buf_start + 1) & CAN_RX_BUFFER_MASK;
-  rx_num_msgs--;
-  enable_can_interrupt();
-
-  return(NO_ERR);
+	return(NO_ERR);
 #else
-  return(MCP2510_receive_message(&(msg->id), msg->data, &(msg->length), &(msg->ext)));
+	return(MCP2510_receive_message(&(msg->id), msg->data, &(msg->length), &(msg->ext)));
 #endif
 }
 
-
-/*! Send a message to the CAN controller */
+/* Send a message to the CAN controller */
 u08 can_send_msg(can_msg* msg, u08 priority){
 #if CAN_TX_BUFFER_SIZE > 0
   u08 err;
@@ -231,8 +219,8 @@ u08 enqueue_message(can_msg* msg){
 }
 
 u08 send_queued_messages(void){
-	can_msg*	msg;
-	u08		err;
+	can_msg* msg;
+	u08 err;
 
 	if(tx_num_msgs <= 0)
 		return (NO_MSG_ERR);
@@ -271,7 +259,7 @@ u08 buffer_received(void){
 			msg = (can_msg*)&(canrxbuf[pos]);
 	
 			err = MCP2510_receive_message(&(msg->id), msg->data, &(msg->length), &(msg->ext));
-	
+
 			if(err == NO_ERR){
 				rx_num_msgs++;
 			}
@@ -283,57 +271,69 @@ u08 buffer_received(void){
 }
 #endif
 
-/*! Register an message ID we want to receive */
-/*! \todo Actually register the ID!!! */
+/* Register an message ID we want to receive
+ * On the MCP2515, there are limited filters. So when we register for a new ID, we should just
+ * make the filter a superposition of the previous and new filters. */
 u08 can_register_id(u32 mask, u32 data, u08 priority){
-  u08   buf[4];
+	u08 buf[4];
+	u32 data_diff;
 
-  u32 data_diff;
-  data_diff = data ^ fil1_data; /* The bits which are different will be 1, the bits that aren't will be 0 */
+	/* we need to be in configuration mode to modify these registers */
+	MCP2510_set_mode(MCP2510_CONFIGURATION_MODE);
 
+	/* set up the filters for rxbuf0, the EXT buffer for scandal messages */
+	data_diff = data ^ fil1_data; /* The bits which are different will be 1, the bits that aren't will be 0 */
 
-  /* If fil1_mask is its original value, set fil1_mask the requested value */
-  if(fil1_mask == 0xFFFFFFFF){
-  	fil1_data = data;
-  	fil1_mask = mask;
-  }else{
-  	fil1_mask = (fil1_mask & mask) & (~data_diff);
-  	fil1_data = data & fil1_mask;
-  }
+	/* If fil1_mask is its original value, set fil1_mask the requested value */
+	if(fil1_mask == 0xFFFFFFFF){
+		fil1_data = data;
+		fil1_mask = mask;
+	}else{
+		fil1_mask = (fil1_mask & mask) & (~data_diff);
+		fil1_data = data & fil1_mask;
+	}
 
-  MCP2510_set_mode(MCP2510_CONFIGURATION_MODE);
+	buf[0] = fil1_data >> 21;
+	buf[1] = (((fil1_data >> 18) & 0x07) << 5) | ((u32)1<<EXIDE) | ((fil1_data >> 16) & 0x03);
+	buf[2] = ((fil1_data >> 8) & 0xFF);
+	buf[3] = ((fil1_data >> 0) & 0xFF);
+	MCP2510_write(RXF1SIDH, buf, 4);
 
-    /* SID10:SID3 of RX0 */
-  buf[0] = fil1_data >> 21;
-  buf[1] = (((fil1_data >> 18) & 0x07) << 5) | ((u32)1<<EXIDE) | ((fil1_data >> 16) & 0x03);
-  buf[2] = ((fil1_data >> 8) & 0xFF);
-  buf[3] = ((fil1_data >> 0) & 0xFF);
-  MCP2510_write(RXF1SIDH, buf, 4);
+	buf[0] = fil1_mask >> 21;
+	buf[1] = (((fil1_mask >> 18) & 0x07) << 5) | ((u32)1<<EXIDE) | ((fil1_mask >> 16) & 0x03);
+	buf[2] = ((fil1_mask >> 8) & 0xFF);
+	buf[3] = ((fil1_mask >> 0) & 0xFF);
+	MCP2510_write(RXM0SIDH, buf, 4);
 
-  buf[0] = fil1_mask >> 21;
-  buf[1] = (((fil1_mask >> 18) & 0x07) << 5) | ((u32)1<<EXIDE) | ((fil1_mask >> 16) & 0x03);
-  buf[2] = ((fil1_mask >> 8) & 0xFF);
-  buf[3] = ((fil1_mask >> 0) & 0xFF);
-  MCP2510_write(RXM0SIDH, buf, 4);
+	/* set up the filters for rxbuf1, the STD buffer for tritium messages */
+	data_diff = data ^ fil1_data; /* The bits which are different will be 1, the bits that aren't will be 0 */
 
-	/* RX1 for std messages */
-	/* this is bad because we're using the same values as for ext messages. but for usbcan it should be fine. */
-  buf[0] = 0;
-  buf[1] = 0;
-  MCP2510_write(RXF2SIDH, buf, 2);
+	/* If fil1_mask is its original value, set fil1_mask the requested value */
+	if(fil2_mask == 0xFFFFFFFF){
+		fil2_data = data;
+		fil2_mask = mask;
+	}else{
+		fil2_mask = (fil2_mask & mask) & (~data_diff);
+		fil2_data = data & fil2_mask;
+	}
 
-  buf[0] = 0;
-  buf[1] = 0;
-  MCP2510_write(RXM1SIDH, buf, 2);
+	buf[0] = (fil2_data >> 3);
+	buf[1] = (fil2_data << 5) & (0xE);
+	MCP2510_write(RXF2SIDH, buf, 2);
 
-  MCP2510_set_mode(MCP2510_NORMAL_MODE);
+	buf[0] = (fil2_mask >> 3);
+	buf[1] = (fil2_mask << 5) & (0xE);
+	MCP2510_write(RXM1SIDH, buf, 2);
 
-  return NO_ERR;
+	/* go back into normal mode */
+	MCP2510_set_mode(MCP2510_NORMAL_MODE);
+
+	return NO_ERR;
 }
 
 /*! Set the baud rate mode to one of the rate modes */
 u08 can_baud_rate(u08 mode){
-  return(MCP2510_bit_timing(mode));
+	return(MCP2510_bit_timing(mode));
 }
 
 /*
@@ -380,86 +380,80 @@ void MCP2510_set_clkout_mode(u08 mode){
   MCP2510_bit_modify(CANCTRL, 0x03, mode); 
 }
 
-/*! Retrieve the operating mode of the MCP2510 */
-u08 MCP2510_get_mode(){
-    	u08 value;
-    	MCP2510_read(CANSTAT, &value, 1);
+/* Retrieve the operating mode of the MCP2510 */
+u08 MCP2510_get_mode() {
+    u08 value;
+    MCP2510_read(CANSTAT, &value, 1);
 	return(value >> 5);
 }
 
 /* Note: This routine will fail if none of the transmit buffers are available */
-/*! Transmit a message using the MCP2510 and a free Tx buffer */
-u08     MCP2510_transmit_message(u32   id,
-				 u08*  buf,
-				 u08   size,
-				 u08   priority){
-  unsigned char value;
-  unsigned char idbuf[8];
+/* Transmit a message using the MCP2510 and a free Tx buffer */
+u08 MCP2510_transmit_message(u32 id, u08 *buf, u08 size, u08 priority) {
+	unsigned char value;
+	unsigned char idbuf[8];
 
-  value = MCP2510_read_status();
-  if((value & (1<<2)) != 0)    /* If the buffer is pending a transmission, return BUF_FULL_ERR */
-   	return BUF_FULL_ERR;
+	value = MCP2510_read_status();
+	if((value & (1<<2)) != 0)    /* If the buffer is pending a transmission, return BUF_FULL_ERR */
+		return BUF_FULL_ERR;
 
-  /* In order to comply with the CAN standard, the size (DLC) must
-     be less than or equal to 8 */
-  if(size>8)
-    size = 8;
+	/* In order to comply with the CAN standard, the size (DLC) must
+	 be less than or equal to 8 */
+	if(size>8)
+		size = 8;
 
-  /* Load the ID */
-  idbuf[0] = (id >> 21) & 0xFF;
-  idbuf[1] = (((id >> 18) & 0x07) << 5) | (1<<EXIDE) | ((id >> 16) & 0x03);
-  idbuf[2] = ((id >> 8) & 0xFF);
-  idbuf[3] = ((id >> 0) & 0xFF);
-  MCP2510_write(TXB0SIDH, idbuf, 4);
+	/* Load the ID */
+	idbuf[0] = (id >> 21) & 0xFF;
+	idbuf[1] = (((id >> 18) & 0x07) << 5) | (1<<EXIDE) | ((id >> 16) & 0x03);
+	idbuf[2] = ((id >> 8) & 0xFF);
+	idbuf[3] = ((id >> 0) & 0xFF);
+	MCP2510_write(TXB0SIDH, idbuf, 4);
 
-  /* Load the data */
-  MCP2510_write(TXB0D0, buf, size);
+	/* Load the data */
+	MCP2510_write(TXB0D0, buf, size);
 
-  /* Set the size byte */
-  MCP2510_write(TXB0DLC, &size, 1);
+	/* Set the size byte */
+	MCP2510_write(TXB0DLC, &size, 1);
 
-  /* Set the priority and flag the buffer to be transmitted */
-  MCP2510_bit_modify(TXB0CTRL, TXBNCTRL_TXP_MASK, priority);
-  MCP2510_RTS(0x01);
+	/* Set the priority and flag the buffer to be transmitted */
+	MCP2510_bit_modify(TXB0CTRL, TXBNCTRL_TXP_MASK, priority);
+	MCP2510_RTS(0x01);
 
-  return(NO_ERR);
+	return(NO_ERR);
 }
 
-u08     MCP2510_transmit_std_message(u32   id,
-				 u08*  buf,
-				 u08   size,
-				 u08   priority){
-  unsigned char value;
-  unsigned char sid_l;
-  unsigned char sid_h;
+u08 MCP2510_transmit_std_message(u32 id, u08 *buf, u08 size, u08 priority) {
+	unsigned char value;
+	unsigned char sid_l;
+	unsigned char sid_h;
 
-  value = MCP2510_read_status();
-  if((value & (1<<2)) != 0)    /* If the buffer is pending a transmission, return BUF_FULL_ERR */
-   	return BUF_FULL_ERR;
+	value = MCP2510_read_status();
+	if((value & (1<<2)) != 0)    /* If the buffer is pending a transmission, return BUF_FULL_ERR */
+		return BUF_FULL_ERR;
 
-  /* In order to comply with the CAN standard, the size (DLC) must
-     be less than or equal to 8 */
-  if(size>8)
-    size = 8;
+	/* In order to comply with the CAN standard, the size (DLC) must
+	 be less than or equal to 8 */
+	if(size>8)
+		size = 8;
 
-  /* Load the ID */
-  sid_h = (id >> 3) & 0xFF; //the id should be 11 bits. Take the high 8
-  sid_l = ((id & 0x7) << 5) | (0<<EXIDE);
+	/* Load the ID */
+	sid_h = (id >> 3) & 0xFF; // the id should be 11 bits. Take the high 8
+	sid_l = ((id & 0x7) << 5) | (0<<EXIDE); // take the last 3 bits, and make sure that it is set to STD.
 
-  MCP2510_write(TXB0SIDH, &sid_h, 1);
-  MCP2510_write(TXB0SIDL, &sid_l, 1);
+	MCP2510_write(TXB0SIDH, &sid_h, 1);
+	MCP2510_write(TXB0SIDL, &sid_l, 1);
 
-  /* Load the data */
-  MCP2510_write(TXB0D0, buf, size);
+	/* Load the data */
+	MCP2510_write(TXB0D0, buf, size);
 
-  /* Set the size byte */
-  MCP2510_write(TXB0DLC, &size, 1);
+	/* Set the size byte */
+	MCP2510_write(TXB0DLC, &size, 1);
 
-  /* Set the priority and flag the buffer to be transmitted */
-  MCP2510_bit_modify(TXB0CTRL, TXBNCTRL_TXP_MASK, priority);
-  MCP2510_RTS(0x01);
+	/* Set the priority and flag the buffer to be transmitted */
+	MCP2510_bit_modify(TXB0CTRL, TXBNCTRL_TXP_MASK, priority);
+	MCP2510_RTS(0x01);
 
-  return(NO_ERR);
+	return(NO_ERR);
 }
 
 void careful_clear_receive_interrupt(u08  flag){
@@ -492,14 +486,15 @@ void careful_clear_receive_interrupt(u08  flag){
 	}
 }
 
-/* buf has to be capable of holding 8 bytes */
 u08 MCP2510_receive_message(u32* id, u08* buf, u08* length, u08 *ext){
 
 	u08 value;
 
 	value = MCP2510_read_status();
 
+	/* if we receive an interrupt for RXBUF0, it will be an extended scandal message */
 	if(value & (1<<STATUS_RX0IF)) { /* Valid message recieved */
+		toggle_yellow_led();
 		/* Make sure we haven't suffered an overflow error */
 		MCP2510_read(EFLG, buf, 1);
 
@@ -539,12 +534,10 @@ u08 MCP2510_receive_message(u32* id, u08* buf, u08* length, u08 *ext){
 		careful_clear_receive_interrupt(trRX0IF);
 
 		return NO_ERR;
-
 	}
 
+	/* if we receive an interrupt for RXBUF1, it will be a standard tritium message */
 	if(value & (1<<STATUS_RX1IF)) { /* Valid message recieved */
-		/* we're using rx1 for std messages */
-
 		toggle_red_led();
 
 		/* Make sure we haven't suffered an overflow error */
@@ -589,9 +582,9 @@ u08 MCP2510_receive_message(u32* id, u08* buf, u08* length, u08 *ext){
 /*! Reset */
 /* Note that the controller won't be available for 128 Fosc cycles */
 void MCP2510_reset(void){
-  spi_select_device(MCP2510);
-  spi_transfer(MCP2510_RESET_COMMAND);
-  spi_deselect_all();
+	spi_select_device(MCP2510);
+	spi_transfer(MCP2510_RESET_COMMAND);
+	spi_deselect_all();
 }
 
 /*! Read */
@@ -599,32 +592,32 @@ void MCP2510_reset(void){
 /*! \todo Make the read and write commands use interrupt driven SPI transfers */
 /*! \todo Return decent error messages! */
 void MCP2510_read(u08	addr, u08* buf, u08 num_bytes){
-  unsigned char i;
+	unsigned char i;
 
-  spi_select_device(MCP2510);
-  spi_transfer(MCP2510_READ_COMMAND);
-  spi_transfer(addr);
+	spi_select_device(MCP2510);
+	spi_transfer(MCP2510_READ_COMMAND);
+	spi_transfer(addr);
 
-  for(i = 0; i < num_bytes; i++)
-    buf[i] = spi_transfer(0);
+	for(i = 0; i < num_bytes; i++)
+		buf[i] = spi_transfer(0);
 
-  spi_deselect_all();
+	spi_deselect_all();
 }
 
 /*! Write */
 /*! \todo Make the read and write commands use interrupt driven SPI transfers */
 /*! \todo Return decent error messages! */
 void MCP2510_write(u08 addr, u08* buf, u08 num_bytes){
-  u08 i;
+	u08 i;
 
-  spi_select_device(MCP2510);
-  spi_transfer(MCP2510_WRITE_COMMAND);
-  spi_transfer(addr);
+	spi_select_device(MCP2510);
+	spi_transfer(MCP2510_WRITE_COMMAND);
+	spi_transfer(addr);
 
-  for(i = 0; i < num_bytes; i++)
-    spi_transfer(buf[i]);
+	for(i = 0; i < num_bytes; i++)
+		spi_transfer(buf[i]);
 
-  spi_deselect_all();
+	spi_deselect_all();
 }
 
 /*! Request to Send
@@ -632,9 +625,9 @@ void MCP2510_write(u08 addr, u08* buf, u08 num_bytes){
  *  Sends the data in one of the transmit buffers
  */
 void MCP2510_RTS(u08 buf_bitfield){
-  spi_select_device(MCP2510);
-  spi_transfer(MCP2510_RTS_COMMAND | buf_bitfield );
-  spi_deselect_all();
+	spi_select_device(MCP2510);
+	spi_transfer(MCP2510_RTS_COMMAND | buf_bitfield );
+	spi_deselect_all();
 }
 
 /*! Read Status
@@ -642,35 +635,32 @@ void MCP2510_RTS(u08 buf_bitfield){
  *  Returns the status register
  */
 u08 MCP2510_read_status(){
-  u08 value;
+	u08 value;
 
-  spi_select_device(MCP2510);
-  spi_transfer(MCP2510_READSTATUS_COMMAND);
-  value = spi_transfer(0);
-  spi_deselect_all();
+	spi_select_device(MCP2510);
+	spi_transfer(MCP2510_READSTATUS_COMMAND);
+	value = spi_transfer(0);
+	spi_deselect_all();
 
-  return(value);
+	return(value);
 }
 
 /*! Bit modify */
 /*  Modify the bits of a particular register using a mask and a data field */
 /*  \todo Modify the bit modify command to use interrupt drive SPI */
 void MCP2510_bit_modify(u08 addr, u08 mask, u08 data){
-  spi_select_device(MCP2510);
-  spi_transfer(MCP2510_BITMODIFY_COMMAND);
-  spi_transfer(addr);
-  spi_transfer(mask);
-  spi_transfer(data);
-  spi_deselect_all();
+	spi_select_device(MCP2510);
+	spi_transfer(MCP2510_BITMODIFY_COMMAND);
+	spi_transfer(addr);
+	spi_transfer(mask);
+	spi_transfer(data);
+	spi_deselect_all();
 }
 
 /*! Set the bit timing (Baud Rate) */
 u08 MCP2510_bit_timing(u08 mode){
-  /* Configure the bit timing */
-  MCP2510_write(CNF1, &(bit_timings[mode][CNF1_FIELD]), 1);
-  MCP2510_write(CNF2, &(bit_timings[mode][CNF2_FIELD]), 1);
-  MCP2510_write(CNF3, &(bit_timings[mode][CNF3_FIELD]), 1);
-
-  /*! \todo Proper error handling here */
-  return NO_ERR;
+	MCP2510_write(CNF1, &(bit_timings[mode][CNF1_FIELD]), 1);
+	MCP2510_write(CNF2, &(bit_timings[mode][CNF2_FIELD]), 1);
+	MCP2510_write(CNF3, &(bit_timings[mode][CNF3_FIELD]), 1);
+	return NO_ERR;
 }
