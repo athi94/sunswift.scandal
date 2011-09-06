@@ -428,7 +428,7 @@ u08 MCP2510_transmit_std_message(u32 id, u08 *buf, u08 size, u08 priority) {
 	unsigned char sid_h;
 
 	value = MCP2510_read_status();
-	if((value & (1<<2)) != 0)    /* If the buffer is pending a transmission, return BUF_FULL_ERR */
+	if((value & (1<<2)) != 0) /* If the buffer is pending a transmission, return BUF_FULL_ERR */
 		return BUF_FULL_ERR;
 
 	/* In order to comply with the CAN standard, the size (DLC) must
@@ -494,7 +494,6 @@ u08 MCP2510_receive_message(u32* id, u08* buf, u08* length, u08 *ext){
 
 	/* if we receive an interrupt for RXBUF0, it will be an extended scandal message */
 	if(value & (1<<STATUS_RX0IF)) { /* Valid message recieved */
-		toggle_yellow_led();
 		/* Make sure we haven't suffered an overflow error */
 		MCP2510_read(EFLG, buf, 1);
 
@@ -538,8 +537,6 @@ u08 MCP2510_receive_message(u32* id, u08* buf, u08* length, u08 *ext){
 
 	/* if we receive an interrupt for RXBUF1, it will be a standard tritium message */
 	if(value & (1<<STATUS_RX1IF)) { /* Valid message recieved */
-		toggle_red_led();
-
 		/* Make sure we haven't suffered an overflow error */
 		MCP2510_read(EFLG, buf, 1);
 
