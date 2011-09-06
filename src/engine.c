@@ -453,7 +453,8 @@ u08	scandal_handle_command(can_msg* msg){
 	return NO_ERR;
 }  
 
+/* TODO: Actually do something with wave sculptor messages
+ */
 u08	scandal_handle_ws_message(can_msg* msg){
-//	UART_PrintfProgStr("WS Message!\n\r");
-	return;
+	return 0;
 }
