@@ -31,20 +31,16 @@
 #include <arch/gpio.h>
 #include <arch/timer.h>
 
-#ifdef CAN_UART_DEBUG
-#warning CAN_UART debugging is enabled. If you need the UART for something else, you need to disable this in project_config.h.
-#include <arch/uart.h>
-#endif
+#include <scandal/stdio.h>
 
 #include <scandal/can.h>
 #include <scandal/error.h>
 #include <scandal/timer.h>
+#include <scandal/leds.h>
 
 #define RECV_BUFF_DIVIDE 20 /* this gives 0-20 as recv buffers and 21-32 as tx buffers */
 
 uint8_t recv_buf_used[MSG_OBJ_MAX]; /* this will be used to determine if a recv buffer is available */
-
-#define REORDER_DATA 1
 
 /* statistics of all the interrupts */
 volatile uint32_t BOffCnt = 0;
@@ -61,33 +57,79 @@ uint32_t CANStatusLogCount = 0;
 #endif
 
 /* Get a message out of the buffer and break it into bits */
-void CAN_decode_packet(uint8_t msg_num, int32_t *data, uint32_t *timestamp,
-	uint16_t *priority, uint16_t *type, uint16_t *node_address, uint16_t *channel_num) {
+void CAN_decode_packet(uint8_t msg_num, can_msg *msg) {
+	/* copy the data */
+	msg->data[0] = (can_buff[msg_num].data[0] & 0x000000FF);
+	msg->data[1] = (can_buff[msg_num].data[0] >> 8) & 0x000000FF;
+	msg->data[2] = (can_buff[msg_num].data[1] & 0x000000FF);
+	msg->data[3] = (can_buff[msg_num].data[1] >> 8) & 0x000000FF;
+	msg->data[4] = (can_buff[msg_num].data[2] & 0x000000FF);
+	msg->data[5] = (can_buff[msg_num].data[2] >> 8) & 0x000000FF;
+	msg->data[6] = (can_buff[msg_num].data[3] & 0x000000FF);
+	msg->data[7] = (can_buff[msg_num].data[3] >>8)  & 0x000000FF;
 
-	*data         = (can_buff[msg_num].data[0] << 16) | (can_buff[msg_num].data[1]);
-	*timestamp    = (can_buff[msg_num].data[2] << 16) | (can_buff[msg_num].data[3]);
+	/* copy the id */
+	msg->id = can_buff[msg_num].id;
 
-	*channel_num  = ((can_buff[msg_num].id >> 0)  & 0x03FF);
-	*node_address = ((can_buff[msg_num].id >> 10) & 0x00FF);
-	*type         = ((can_buff[msg_num].id >> 18) & 0x00FF);
-	*priority     = ((can_buff[msg_num].id >> 26) & 0x0007);
+	/* copy the length */
+	msg->length= CAN_MSG_MAXSIZE;
 
+	/* set the type */
+	msg->ext = can_buff[msg_num].ext;
+
+#if CAN_UART_DEBUG
+	if (msg->ext) {
+		uint16_t priority;
+		uint16_t type;
+		uint16_t node_address;
+		uint16_t channel_num;
+
+		channel_num  = ((can_buff[msg_num].id >> 0)  & 0x03FF);
+		node_address = ((can_buff[msg_num].id >> 10) & 0x00FF);
+		type         = ((can_buff[msg_num].id >> 18) & 0x00FF);
+		priority     = ((can_buff[msg_num].id >> 26) & 0x0007);
+
+		UART_printf("got an ext can message...\n\r");
+		UART_printf(" id is               (0x%x)\n\r",msg->id);
+
+		UART_printf(" priority is         %x\n\r", priority);
+		UART_printf(" node_address is     %x\n\r", node_address);
+		UART_printf(" message type is     %x\n\r", type);
+		UART_printf(" channel_num is      %d\n\r", channel_num);
+	} else {
+		UART_printf("got a std can message...\n\r");
+		UART_printf(" id is               %d (0x%x)\n\r", msg->id, msg->id);
+	}
+#endif
+
+	/* we can now use the receive buffer for another message! */
 	CANRxDone[msg_num] = 0;
 }
 
 /* Set up a message buffer to receive a particular type of message specified in filter and mask */
-void CAN_set_up_filter(uint8_t msg_id, uint32_t filter_mask, uint32_t filter_addr) {
+void CAN_set_up_filter(uint8_t msg_id, uint32_t filter_mask, uint32_t filter_addr, uint8_t ext) {
 
-	LPC_CAN->IF1_CMDMSK = WR|MASK|ARB|CTRL|DATAA|DATAB; //Configuring (Writing to) the message objects
+	/* This is what we're changing in the message buffer object */
+	LPC_CAN->IF1_CMDMSK = WR | MASK | ARB | CTRL | DATAA | DATAB;
 
-	LPC_CAN->IF1_MSK1 = filter_mask & 0xFFFF; //Filtermask used to be ID_EXT_MASK
-	LPC_CAN->IF1_MSK2 = MASK_MXTD | (filter_mask >> 16);
+	/* set the first filtermask register */
+	LPC_CAN->IF1_MSK1 = filter_mask & 0xFFFF;
 
-	LPC_CAN->IF1_ARB1 = (filter_addr) & 0xFFFF; //filteraddr used to be RX_EXT_MSG_ID + i
-	LPC_CAN->IF1_ARB2 = ID_MVAL | ID_MTD | (filter_addr >> 16); // use this message object, extended
+	/* set the second filtermask register */
+	LPC_CAN->IF1_MSK2 = (filter_mask >> 16);
+	if (ext == CAN_EXT_MSG)
+		LPC_CAN->IF1_MSK2 |= MASK_MXTD;
+
+	/* set the first arbitration register */
+	LPC_CAN->IF1_ARB1 = filter_addr & 0xFFFF; //filteraddr used to be RX_EXT_MSG_ID + i
+
+	/* set the secondf arbitration register */
+	LPC_CAN->IF1_ARB2 = ID_MVAL | (filter_addr >> 16); // use this message object, extended
+	if (ext == CAN_EXT_MSG)
+		LPC_CAN->IF1_ARB2 |= ID_MTD;
 	LPC_CAN->IF1_ARB2 &= ~ID_DIR; // receive direction
 
-	LPC_CAN->IF1_MCTRL = UMSK|RXIE|EOB|DLC_MAX;
+	LPC_CAN->IF1_MCTRL = UMSK | RXIE | EOB | DLC_MAX;
 
 	LPC_CAN->IF1_DA1 = 0x0000;
 	LPC_CAN->IF1_DA2 = 0x0000;
@@ -97,6 +139,7 @@ void CAN_set_up_filter(uint8_t msg_id, uint32_t filter_mask, uint32_t filter_add
 	/* Transfer data to message RAM */
 	LPC_CAN->IF1_CMDREQ = msg_id + 1;
 
+	/* wait until it's done */
 	while( LPC_CAN->IF1_CMDREQ & IFCREQ_BUSY )
 		;
 }
@@ -120,9 +163,11 @@ void CAN_MessageProcess( uint8_t MsgNo ) {
 	p_add = (uint32_t *)&can_buff[MsgNo];
 
 	if( LPC_CAN->IF2_ARB2 & ID_MTD ) { /* bit 28-0 is 29 bit extended frame */
+		*p_add++ = CAN_EXT_MSG;
 		/* mask off MsgVal and Dir */ 
 		MsgID = (LPC_CAN->IF2_ARB1|((LPC_CAN->IF2_ARB2&0x5FFF)<<16));
 	} else {
+		*p_add++ = CAN_STD_MSG;
 		/* bit 28-18 is 11-bit standard frame */
 		MsgID = (LPC_CAN->IF2_ARB2 &0x1FFF) >> 2;
 	}
@@ -130,36 +175,10 @@ void CAN_MessageProcess( uint8_t MsgNo ) {
 	*p_add++ = MsgID;
 	*p_add++ = LPC_CAN->IF2_MCTRL & 0x000F;	// Get Msg Obj Data length
 
-#if REORDER_DATA
-	uint32_t msghold;
-	uint32_t msgleftshift;
-	uint32_t msgrightshift;
-
-	msghold = LPC_CAN->IF2_DA1; //Stores the next two bytes in msghold
-	msgleftshift = (msghold & 0x000000FF)<<8; //Shifts the last byte left by 8 bits
-	msgrightshift = (msghold & 0x0000FF00)>>8; //Shifts the second last byte right by 8 bits
-	*p_add++ = msgleftshift | msgrightshift; //OR's the two shifted results to give the data in the right order
-
-	msghold = LPC_CAN->IF2_DA2; //Stores the next two bytes in msghold
-	msgleftshift = (msghold & 0x000000FF)<<8; //Shifts the last byte left by 8 bits
-	msgrightshift = (msghold & 0x0000FF00)>>8; //Shifts the second last byte right by 8 bits
-	*p_add++ = msgleftshift | msgrightshift; //OR's the two shifted results to give the data in the right order
-
-	msghold = LPC_CAN->IF2_DB1; //Stores the next two bytes in msghold
-	msgleftshift = (msghold & 0x000000FF)<<8; //Shifts the last byte left by 8 bits
-	msgrightshift = (msghold & 0x0000FF00)>>8; //Shifts the second last byte right by 8 bits
-	*p_add++ = msgleftshift | msgrightshift; //OR's the two shifted results to give the data in the right order
-
-	msghold = LPC_CAN->IF2_DB2; //Stores the next two bytes in msghold
-	msgleftshift = (msghold & 0x000000FF)<<8; //Shifts the last byte left by 8 bits
-	msgrightshift = (msghold & 0x0000FF00)>>8; //Shifts the second last byte right by 8 bits
-	*p_add++ = msgleftshift | msgrightshift; //OR's the two shifted results to give the data in the right order
-#else
 	*p_add++ = LPC_CAN->IF2_DA1;
 	*p_add++ = LPC_CAN->IF2_DA2;
 	*p_add++ = LPC_CAN->IF2_DB1;
 	*p_add++ = LPC_CAN->IF2_DB2;
-#endif
 
 	return;
 }
@@ -190,6 +209,7 @@ void CAN_IRQHandler(void) {
 				/* deal with RX only for now. */
 				msg_no = can_int & 0x7FFF;
 				if ( (msg_no >= 0x01) && (msg_no <= 0x20) ) {
+					toggle_yellow_led();
 					LPC_CAN->STAT &= ~STAT_RXOK;
 					CAN_MessageProcess( msg_no-1 ); //msg_no goes up from 1, msg_no ranges from 0
 					CANRxDone[msg_no-1] = TRUE;
@@ -256,7 +276,7 @@ uint8_t buffer_free(uint8_t msg_num) {
 
 /* Send a message */
 int CAN_Send(uint16_t Pri, can_msg *msg) {
-	uint32_t tx_addr = 0x1FFFFFFF & msg->id;
+	uint32_t tx_addr;
 	uint8_t  length = 8;
 	int i;
 
@@ -267,30 +287,54 @@ int CAN_Send(uint16_t Pri, can_msg *msg) {
 	memcpy(&can_data, msg->data, sizeof(uint32_t));
 	memcpy(&can_timestamp, msg->data+sizeof(uint32_t), sizeof(uint32_t));
 
-	/* MsgVal: 1, Mtd: 1, Dir: 1, ID = 0x200000 */
-	LPC_CAN->IF1_ARB2 = ID_MVAL | ID_MTD | ID_DIR | (tx_addr >> 16);
-	LPC_CAN->IF1_ARB1 = tx_addr & 0x0000FFFF;
-
-	/* Mxtd: 1, Mdir: 1, Mask is 0x7FF */
-	LPC_CAN->IF1_MSK2 = MASK_MXTD | MASK_MDIR | (ID_EXT_MASK >> 16);
-	LPC_CAN->IF1_MSK1 = ID_EXT_MASK & 0x0000FFFF;
-
-	LPC_CAN->IF1_MCTRL = UMSK|TXRQ|EOB|(length & DLC_MASK);
-
-	/* put the data in the buffer register */
-	LPC_CAN->IF1_DA1 = can_data & 0x0000FFFF;
-	LPC_CAN->IF1_DA2 = ((can_data & 0xFFFF0000) >> 16);
-
-	/* put the timestamp in the buffer register */
-	LPC_CAN->IF1_DB1 = can_timestamp & 0x0000FFFF;
-	LPC_CAN->IF1_DB2 = ((can_timestamp & 0xFFFF0000) >> 16);
-	LPC_CAN->IF1_CMDMSK = WR|MASK|ARB|CTRL|TREQ|DATAA|DATAB;
-
+ 	/* find a free message buffer */
 	for(i = RECV_BUFF_DIVIDE+1; i < MSG_OBJ_MAX; i++) {
+
 		if (buffer_free(i)) {
+			/* set the length DLC field and set the transmission request bit */
+			LPC_CAN->IF1_MCTRL = UMSK | TXRQ | EOB | (length & DLC_MASK);
+
+			/* put the data in the buffer register */
+			LPC_CAN->IF1_DA1 = can_data & 0x0000FFFF;
+			LPC_CAN->IF1_DA2 = ((can_data & 0xFFFF0000) >> 16);
+
+			/* put the timestamp in the buffer register */
+			LPC_CAN->IF1_DB1 = can_timestamp & 0x0000FFFF;
+			LPC_CAN->IF1_DB2 = ((can_timestamp & 0xFFFF0000) >> 16);
+
+			/* we're sending an extended message */
+			if (msg->ext == CAN_EXT_MSG) {
+				tx_addr = ID_EXT_MASK & msg->id;
+
+				LPC_CAN->IF1_ARB1 = tx_addr & 0x0000FFFF;
+				/* message is now valid, extended, outgoing */
+				LPC_CAN->IF1_ARB2 = ID_MVAL | ID_MTD | ID_DIR | (tx_addr >> 16);
+
+				/* extended message, outgoing, Mask is 0x7FF */
+				LPC_CAN->IF1_MSK1 = ID_EXT_MASK & 0x0000FFFF;
+				LPC_CAN->IF1_MSK2 = MASK_MXTD | MASK_MDIR | (ID_EXT_MASK >> 16);
+
+			/* we're sending a standard message */
+			} else if (msg->ext == CAN_STD_MSG) {
+				tx_addr = ID_STD_MASK & msg->id;
+
+				LPC_CAN->IF1_ARB1 = tx_addr & 0x0000FFFF;
+				/* message is now valid, direction outgoing */
+				LPC_CAN->IF1_ARB2 = ID_MVAL | ID_DIR | (tx_addr >> 16);
+
+				/* direction outgoing, Mask is 0x7FF */
+				LPC_CAN->IF1_MSK1 = ID_STD_MASK & 0x0000FFFF;
+				LPC_CAN->IF1_MSK2 = MASK_MDIR | (ID_STD_MASK >> 16);
+			}
+
+			/* write the message object */
+			LPC_CAN->IF1_CMDMSK = WR | MASK | ARB | CTRL | TREQ | DATAA | DATAB;
+
 			LPC_CAN->IF1_CMDREQ = i;
+
 			while ( LPC_CAN->IF1_CMDREQ & IFCREQ_BUSY )
 				; /* Waits until IF1 transfer thingy has done its duties */
+
 			return NO_ERR;
 		}
 	}
@@ -314,44 +358,12 @@ void init_can(void) {
 }
 
 /* Get a message from the CAN controller. */
-u08 can_get_msg(can_msg* msg) {
+u08 can_get_msg(can_msg *msg) {
 	int i;
-	uint8_t can_data[CAN_MSG_MAXSIZE/2];
-	uint8_t can_timestamp[CAN_MSG_MAXSIZE/2];
-	uint16_t priority;
-	uint16_t msg_type;
-	uint16_t node_address;
-	uint16_t channel_num;
 
 	for(i = 0; i < MSG_OBJ_MAX; i++) {
 		if (CANRxDone[i] == TRUE) {
-			CAN_decode_packet(i, (int32_t*)(&can_data), (uint32_t*)(&can_timestamp), &priority, &msg_type, &node_address, &channel_num);
-
-			msg->id = can_buff[i].id;
-			msg->length= CAN_MSG_MAXSIZE;
-			/* ordering is important! */
-			msg->data[7] = can_timestamp[0];
-			msg->data[6] = can_timestamp[1];
-			msg->data[5] = can_timestamp[2];
-			msg->data[4] = can_timestamp[3];
-			msg->data[3] = can_data[0];
-			msg->data[2] = can_data[1];
-			msg->data[1] = can_data[2];
-			msg->data[0] = can_data[3];
-
-#ifdef CAN_UART_DEBUG
-			UART_printf("got a can message...\n\r");
-			UART_printf(" id is               %d (0x%x)\n\r", can_buff[i].id, can_buff[i].id);
-			UART_printf(" priority is         %d\n\r", priority);
-			UART_printf(" node_address is     %d\n\r", node_address);
-			UART_printf(" message type is     %d\n\r", msg_type);
-			UART_printf(" channel_num is      %d\n\r", channel_num);
-			UART_printf(" data value is:      %d (0x%x)\n\r", *((uint32_t*)&msg->data[0]), *((uint32_t*)&msg->data[0]));
-			UART_printf(" timestamp value is: %d (0x%x)\n\r", *((uint32_t*)&msg->data[4]), *((uint32_t*)&msg->data[4]));
-			for(n = 0; n < 8; n++)
-				UART_printf("msg->data[%d] = %d (0x%x)\n\r", n, msg->data[n], msg->data[n]);
-#endif
-
+			CAN_decode_packet(i, msg);
 			return NO_ERR;
 		}
 	}
@@ -360,13 +372,7 @@ u08 can_get_msg(can_msg* msg) {
 
 /* Send a message using the CAN controller */
 u08 can_send_msg(can_msg *msg, u08 priority) {
-	if (msg->ext == CAN_STD_MSG) {
-		return NO_MSG_ERR;
-	} else if(msg->ext == CAN_EXT_MSG) {
-		return CAN_Send((uint16_t)priority, msg);
-	} else {
-		return NO_MSG_ERR;
-	}
+	return CAN_Send((uint16_t)priority, msg);
 }
 
 /* Register for a message type. Currently, each message that we want to
@@ -376,7 +382,7 @@ u08 can_send_msg(can_msg *msg, u08 priority) {
  * for where this function is called to see why. At the moment, I don't think
  * there are any nodes with large numbers of in channels. If we need to deal
  * with this, it can be done in the future */
-u08 can_register_id(u32 mask, u32 data, u08 priority) {
+u08 can_register_id(u32 mask, u32 data, u08 priority, u08 ext) {
 	int i;
 
 	NVIC_DisableIRQ(CAN_IRQn);
@@ -391,13 +397,10 @@ u08 can_register_id(u32 mask, u32 data, u08 priority) {
 
 		/* find a free buffer and set up a filter */
 		} else if (!recv_buf_used[i]) {
-			CAN_set_up_filter(i, mask, data);
+			CAN_set_up_filter(i, mask, data, ext);
 			recv_buf_used[i] = 1;
 			NVIC_EnableIRQ(CAN_IRQn);
 			LPC_CAN->CNTL |= (CTRL_IE|CTRL_SIE|CTRL_EIE);
-#ifdef CAN_UART_DEBUG
-			UART_printf("registering for a message type %d (0x%x)\n\r", data, data);
-#endif
 			return NO_ERR;
 		}
 	}

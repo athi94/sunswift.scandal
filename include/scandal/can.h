@@ -76,7 +76,7 @@ u08  can_send_msg(can_msg* msg, u08 priority);
 /* Register a message ID/mask. This guarantees that these messages will
   not be filtered out by hardware filters. Other messages are not
   guaranteed */
-u08  can_register_id(u32 mask, u32 data, u08 priority);
+u08  can_register_id(u32 mask, u32 data, u08 priority, u08 ext);
 
 /* Should be called when the CAN controller has an interrupt */
 /* \todo This is probably not the right location for this */

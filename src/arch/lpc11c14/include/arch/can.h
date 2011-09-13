@@ -42,6 +42,7 @@ at a time.
 
 /* Data structure for a CAN message */
 typedef struct {
+	uint32_t	ext;
 	uint32_t	id;
 	uint32_t	dlc;
 	uint32_t	data[4];
@@ -161,9 +162,8 @@ typedef struct {
 extern void CAN_Init( uint32_t baud );
 extern void CAN_MessageProcess( uint8_t MsgObjNo );
 int CAN_Send(uint16_t Pri, can_msg *msg);
-void CAN_set_up_filter(uint8_t msg_id, uint32_t filter_mask, uint32_t filter_addr);
-void CAN_decode_packet(uint8_t msg_num, int32_t *data, uint32_t *timestamp,
-	uint16_t *priority, uint16_t *type, uint16_t *node_address, uint16_t *channel_num);
+void CAN_set_up_filter(uint8_t msg_id, uint32_t filter_mask, uint32_t filter_addr, uint8_t ext);
+void CAN_decode_packet(uint8_t msg_num, can_msg *msg);
 
 #endif  /* __CAN_H__ */
 /*****************************************************************************
