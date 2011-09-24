@@ -776,12 +776,12 @@
 	//#define WS22_AMBIENT_AIR_IN_TEMP			12 //not present in WS22
 	#define WS22_AMP_HOURS					13 //miliamp hours
 	#define WS22_ODOMETER					14 //metres
-	#define IPM_PHASEA_TEMP					15 //milidegree celsius
-	#define IPM_PHASEB_TEMP					16 //milidegree celsius
-	#define IPM_PHASEC_TEMP					17 //milidegree celsius
-	#define DSP_BOARD_TEMP					18 //milidegree celsius
-	#define CAN_RX_ERROR_COUNT				19 //uint
-	#define CAN_TX_ERROR_COUNT				20 //uint
+	#define WS22_IPM_PHASEA_TEMP					15 //milidegree celsius
+	#define WS22_IPM_PHASEB_TEMP					16 //milidegree celsius
+	#define WS22_IPM_PHASEC_TEMP					17 //milidegree celsius
+	#define WS22_DSP_BOARD_TEMP					18 //milidegree celsius
+	#define WS22_CAN_RX_ERROR_COUNT				19 //uint
+	#define WS22_CAN_TX_ERROR_COUNT				20 //uint
 	#define WS22_NUM_OUT_CHANNELS				18 //18 since we add 6 channels and remove 3
 
 	/* In channels */
