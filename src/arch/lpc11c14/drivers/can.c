@@ -38,6 +38,9 @@
 #include <scandal/timer.h>
 #include <scandal/leds.h>
 
+#define TIMEOUT 2500000
+#warning using hacky timeout in CAN driver
+
 #define RECV_BUFF_DIVIDE 20 /* this gives 0-20 as recv buffers and 21-32 as tx buffers */
 
 uint8_t recv_buf_used[MSG_OBJ_MAX]; /* this will be used to determine if a recv buffer is available */
@@ -169,15 +172,25 @@ void CAN_MessageProcess( uint8_t MsgNo ) {
 	uint32_t MsgID;
 	uint32_t *p_add;
 
-	while ( LPC_CAN->IF2_CMDREQ & IFCREQ_BUSY )
-		;
+	uint32_t i;
+
+	i = 0;
+	while ( LPC_CAN->IF2_CMDREQ & IFCREQ_BUSY && i < TIMEOUT )
+		i++;
+
+	if (i >= TIMEOUT)
+		return;
 
 	LPC_CAN->IF2_CMDMSK = RD|MASK|ARB|CTRL|INTPND|TREQ|DATAA|DATAB;	
 	LPC_CAN->IF2_CMDREQ = MsgNo+1;    /* Start message transfer */
 
 	/* Check new data bit */
-	while ( LPC_CAN->IF2_CMDREQ & IFCREQ_BUSY )
-		;
+	i = 0;
+	while ( LPC_CAN->IF2_CMDREQ & IFCREQ_BUSY && i < TIMEOUT)
+		i++;
+
+	if (i >= TIMEOUT)
+		return;
 
 	/* where are we storing the message? */
 	p_add = (uint32_t *)&can_buff[MsgNo];
@@ -299,6 +312,8 @@ int CAN_Send(uint16_t Pri, can_msg *msg) {
 	uint8_t  length = 8;
 	int i;
 
+	uint32_t timeout = 0;
+
 	/* Data is stored in can_msg->data[0-4], timestamp is stored in can_msg->data[4-7] */
 	uint32_t can_data;
 	uint32_t can_timestamp;
@@ -352,8 +367,11 @@ int CAN_Send(uint16_t Pri, can_msg *msg) {
 
 			LPC_CAN->IF1_CMDREQ = i;
 
-			while ( LPC_CAN->IF1_CMDREQ & IFCREQ_BUSY )
-				; /* Waits until IF1 transfer thingy has done its duties */
+			while ( LPC_CAN->IF1_CMDREQ & IFCREQ_BUSY && timeout < TIMEOUT )
+				timeout++; /* Waits until IF1 transfer thingy has done its duties */
+
+			if (timeout >= TIMEOUT)
+				return NO_MSG_ERR;
 
 			return NO_ERR;
 		}

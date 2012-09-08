@@ -27,7 +27,8 @@
 #define WDPROTECT         (0x1<<4)
 
 #ifndef WDT_FEED_VALUE
-#define WDT_FEED_VALUE		0x003FFFFF
+#define WDT_FEED_VALUE		0x1770 //3s Watchdog
+#warning HACKED in WDT timer vALUE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #endif
 
 #define WINDOW_MODE       0
