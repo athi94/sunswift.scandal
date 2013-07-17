@@ -318,7 +318,8 @@ void CAN_IRQHandler(void) {
 	uint32_t can_int, msg_no;
 
 	while ( (can_int = LPC_CAN->INT) != 0 ) {
-		if ( can_int & CAN_STATUS_INTERRUPT ) {
+    
+		if ( can_int & CAN_STATUS_INTERRUPT ) { //If a status interrupt
 			canstat = LPC_CAN->STAT;
 #if CAN_DEBUG
 			CANStatusLog[CANStatusLogCount++] = canstat;
@@ -330,10 +331,12 @@ void CAN_IRQHandler(void) {
 
 			if ( canstat & STAT_BOFF ) {
 				BOffCnt++;
+                LPC_CAN->CNTL = LPC_CAN->CNTL & (~0x1); //Clear the INIT flag so the CAN controller can keep doing its thing
 				return;
 			}
 
-		} else {
+		} else { //Otherwise if it is a message object to be processed
+            canstat = LPC_CAN->STAT;
 			if ( (canstat & STAT_LEC) == 0 ) { /* NO ERROR */
 				/* deal with RX only for now. */
 				msg_no = can_int & 0x7FFF;
@@ -342,7 +345,9 @@ void CAN_IRQHandler(void) {
 					CAN_MessageProcess( msg_no-1 ); //msg_no goes up from 1, msg_no ranges from 0
 					CANRxDone[msg_no-1] = TRUE;
 				}
-			}
+			} else {
+                LPC_CAN->STAT = 0; //Clear the status register so we can carry on.
+            }
 		}
 	}
 	return;
@@ -620,7 +625,7 @@ u08 can_register_id(u32 mask, u32 data, u08 priority, u08 ext) {
 		if (i == RECV_BUFF_DIVIDE-1) {
 			NVIC_EnableIRQ(CAN_IRQn);
 			LPC_CAN->CNTL |= (CTRL_IE|CTRL_SIE|CTRL_EIE);
-			return NO_ERR;
+			return NO_MSG_ERR;
 
 		/* find a free buffer and set up a filter */
 		} else if (!recv_buf_used[i]) {
