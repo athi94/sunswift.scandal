@@ -46,8 +46,10 @@
 
 
 
-in_channel           in_channels[NUM_IN_CHANNELS];
-in_channel_handler   in_channel_handlers[NUM_IN_CHANNELS];
+in_channel                  in_channels[NUM_IN_CHANNELS];
+in_channel_handler          in_channel_handlers[NUM_IN_CHANNELS];
+standard_message_handler    user_std_msg_handler;
+uint32_t                    user_std_msg_handler_set = 0;
 
 scandal_config  my_config;
 volatile u32    heartbeat_timer;
@@ -180,6 +182,22 @@ void scandal_register_in_channel_handler(int chan_num, in_channel_handler handle
 	in_channel_handlers[chan_num] = handler;
 }
 
+
+/* Lets the user code define a standard message handler which is given all the
+   standard CAN messages that are not handled by scandal. This might be useful
+   for receiving messages from other CAN devices such as motor controllers or
+   maximum power point trackers that might be from a different vendor
+   
+   Once set, user_std_msg_handler_set is flagged, indicating that we have a
+   handler and all subsequent standard messages will 
+   */
+
+void register_standard_message_handler(standard_message_handler handler){
+    user_std_msg_handler = handler;
+    user_std_msg_handler_set = 1;
+}
+
+
 s32 scandal_get_in_channel_value(u16 chan_num){
 	return(in_channels[chan_num].value);
 }
@@ -251,7 +269,12 @@ void handle_scandal(void){
 
 /* this is most likely to be a wave sculptor message */
 u08	handle_std_message(can_msg*	msg){
-	scandal_handle_ws_message(msg);
+    if(user_std_msg_handler_set){
+        standard_message_handler handler = user_std_msg_handler;
+		handler(msg);
+    } else {
+        scandal_handle_ws_message(msg);
+    }
 	return NO_ERR;
 }
 /* Local Functions */

@@ -241,7 +241,10 @@ u08 			scandal_in_channel_is_valid(u16 chan_num);
 in_channel*		scandal_get_in_channel(u16 chan_num);
 
 typedef			void (*in_channel_handler)(int32_t value, uint32_t src_time);
+typedef			void (*standard_message_handler)(can_msg *msg);
+
 void			scandal_register_in_channel_handler(int chan_num, in_channel_handler handler);
+void            register_standard_message_handler(standard_message_handler handler);
 
 u08 			scandal_get_addr(void);
 u32 			scandal_get_mac(void);

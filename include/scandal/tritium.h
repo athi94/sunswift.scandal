@@ -55,9 +55,9 @@ typedef union _group_16 {
 
 #define MC_BASE					0x400
 #define MC_STATUS				MC_BASE+1
-#define MC_BUS					MC_BASE+2
-#define MC_VELOCITY				MC_BASE+3
-#define MC_PHASE				MC_BASE+4
+//#define MC_BUS				MC_BASE+2
+//define MC_VELOCITY			MC_BASE+3
+//#define MC_PHASE				MC_BASE+4
 #define MC_MOTOR_VOLTAGE_VECTOR	MC_BASE+5
 #define MC_MOTOR_CURRENT_VECTOR	MC_BASE+6
 #define MC_MOTOR_BACKEMF_VECTOR	MC_BASE+7
