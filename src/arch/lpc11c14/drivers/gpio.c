@@ -144,13 +144,13 @@ void GPIO_SetFunction(uint32_t port, uint32_t bit, uint32_t func, uint32_t mode)
 			LPC_IOCON->PIO0_9 &= ~0x7F;
 			LPC_IOCON->PIO0_9 |= func;
 			LPC_IOCON->PIO0_9 |= (mode << 3);
-			return;
+			break;
 		 case 10:
 			LPC_IOCON->SWCLK_PIO0_10 &= ~0x7F;
 			LPC_IOCON->SWCLK_PIO0_10 |= (func+1);
 			LPC_IOCON->SWCLK_PIO0_10 |= (mode << 3);
 			/* this is TCLK, it's used for programming */
-			return;
+			break;
 		 case 11:
 			LPC_IOCON->R_PIO0_11 &= ~0x7F;
 			LPC_IOCON->R_PIO0_11 |= (func+1);
